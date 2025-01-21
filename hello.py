@@ -1,6 +1,4 @@
-def main():
-    print("Hello from agent-test!")
-
+import os
 
 if __name__ == "__main__":
-    main()
+    print(os.environ["OPENAI_API_KEY"])
