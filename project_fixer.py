@@ -11,7 +11,7 @@ def run_analysis_tool(file_name: str=None) -> str:
     """Runs the analysis tool on the given project directory and returns the output.
 
     Args:
-        file_name (str): Optional file name (relative path) to limit the analysis on.
+        file_name (str): Optional file name to limit the analysis on.
             This should only be used if the file_name is known and exists.
             Otherwise, leave it empty.
 
@@ -21,7 +21,10 @@ def run_analysis_tool(file_name: str=None) -> str:
     logger.info(f"Running analysis tool on: {PROJECT_DIR}")
     args = ["ruff", "check", "--output-format", "json-lines"]
     if file_name:
-        target_file = PROJECT_DIR / file_name
+        if pathlib.Path(file_name).is_absolute():
+            target_file = pathlib.Path(file_name)
+        else:
+            target_file = PROJECT_DIR / file_name
         if PROJECT_DIR not in target_file.parents:
             return "Error: Access to this file is not allowed!"
         if not target_file.exists():
@@ -29,7 +32,6 @@ def run_analysis_tool(file_name: str=None) -> str:
         args.append(target_file)
     try:
         result = subprocess.run(args, capture_output=True, text=True, cwd=PROJECT_DIR)
-        print(result)
         logger.debug(f"Result: {result}")
         logger.debug(f"Return code: {result.returncode}")
         if result.returncode == 2:
@@ -39,41 +41,56 @@ def run_analysis_tool(file_name: str=None) -> str:
         logger.warning(f"Failed to run shell command: {e}")
         return f"Error: {e}"
 
-def fix_issues(project_dir: pathlib.Path, issues: list[dict]) -> None:
-    """Fixes the issues in the project files based on the analysis tool's output.
-
-    Args:
-        project_dir (pathlib.Path): Path to the project directory.
-        issues (list[dict]): A list of issues to fix.
-    """
-    logger.info("Fixing issues in project files")
-    # TODO: Implement issue fixing
-
 analysis_agent = Agent(
     name="Analyzer",
     role="Analyzes the project for any issue and outputs a list of issues.",
     tools=[run_analysis_tool],
     show_tool_calls=False,
     description="You are responsible for identifying issues in a software project with a linting tool",
-    instructions="""Run the analysis tools and output a list of issues found. 
-    The list should contain the exact file names, line number and position and a full description of the issues found.
+    instructions=f"""Run the analysis tools and output a list of issues found. 
+    The list should contain the exact file path, line number and position and a full description of the issues found.
+    
+    Always use the full absolute path of the files, never only the name.
     
     If you encounter any issues with the tools, please output the errors in detail.
     
     If (and only if) you're asked to return results for a single file, pass the relative path of the file to your tools."""
 )
-
+fixing_agent = Agent(
+    name="Fixer",
+    role="Takes one issue and fixes it in a software project.",
+    tools=[FileTools(base_dir=PROJECT_DIR)],
+    show_tool_calls=True,
+    description="You are responsible for fixing a given problem in a software project",
+    instructions="""You are a very experienced, clean coder. 
+    But you respect the style of the existing code and try to edit it in the existing style. 
+    You thoroughly double-check if your fix really improves the situation. 
+    If you assess, that there is a very good reason not to follow the suggestion, you disable the linting for this issue and add a comment why.
+    
+    To fix the issue, you can edit the file. 
+    Make sure to modify the files in place.
+    Always add a trailing newline to any text files you change.
+    
+    Always use the full absolute path of the files, never only the name.
+    """
+)
 main_agent = Agent(
     name="Project Fixer",
-    team=[analysis_agent],
+    team=[analysis_agent, fixing_agent],
     tools=[FileTools(base_dir=PROJECT_DIR)],
-    instructions=["Analyze and suggest fixes for issues in the given Python project."],
+    instructions=[f"""
+    Analyze and apply fixes for issues in the given Python project.
+    
+    Always use the full absolute path of the files, never only the name.
+    
+    Always double-check if everything is resolved, otherwise re-iterate.
+    That means, after fixing the files, run the analyzing tools again and see if further fixes are necessary.
+    
+    """],
     show_tool_calls=True,
     markdown=True,
 )
-
-
 main_agent.print_response(
-    "Go and give me suggestions",
+    "Go and fix all issues. ",
     stream=True,
 )

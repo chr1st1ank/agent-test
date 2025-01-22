@@ -11,15 +11,12 @@ tasks:
     cmds:
       - |
         if [ -d "{{.temp_dir}}" ]; then
-          echo "'{{.temp_dir}}' directory exists. Clearing its contents."
-          rm -rf {{.temp_dir}}/*
-        else:
-          echo "'{{.temp_dir}}' directory does not exist. Creating it."
-          mkdir {{.temp_dir}}
+          echo "'{{.temp_dir}}' directory exists. Removing it.."
+          rm -rf {{.temp_dir}}
         fi
       - |
         echo "Cloning the repository {{.repo_url}} into the '{{.temp_dir}}' directory."
-        git clone {{.repo_url}} {{.temp_dir}}
+        git clone --depth 1 {{.repo_url}} {{.temp_dir}}
     silent: false
 
   cleanup:
