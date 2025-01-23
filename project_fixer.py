@@ -1,8 +1,8 @@
 import pathlib
 import subprocess
-from phi.tools import Toolkit
 from phi.agent import Agent
 from phi.utils.log import logger
+from phi.model.openai import OpenAIChat
 from phi.tools.file import FileTools
 
 PROJECT_DIR = pathlib.Path("./temp")
@@ -18,8 +18,7 @@ def run_analysis_tool(file_name: str=None) -> str:
     Returns:
         str: The output of the analysis tool.
     """
-    logger.info(f"Running analysis tool on: {PROJECT_DIR}")
-    args = ["ruff", "check", "--output-format", "json-lines"]
+    args = ["ruff", "check", "--select", "S", "--output-format", "json-lines"]
     if file_name:
         if pathlib.Path(file_name).is_absolute():
             target_file = pathlib.Path(file_name)
@@ -31,6 +30,41 @@ def run_analysis_tool(file_name: str=None) -> str:
             return "Error: The target file does not exist!"
         args.append(target_file)
     try:
+        logger.info(f"Running ruff check: {args}")
+        result = subprocess.run(args, capture_output=True, text=True, cwd=PROJECT_DIR)
+        logger.debug(f"Result: {result}")
+        logger.debug(f"Return code: {result.returncode}")
+        if result.returncode == 2:
+            return f"Error: {result.stderr}"
+        return result.stdout
+    except Exception as e:
+        logger.warning(f"Failed to run shell command: {e}")
+        return f"Error: {e}"
+
+def autofix(file_name: str=None) -> str:
+    """Runs deterministic autofix tools.
+
+    Args:
+        file_name (str): Optional file name to limit the work on.
+            This should only be used if the file_name is known and exists.
+            Otherwise, leave it empty.
+
+    Returns:
+        str: The output of the analysis tool.
+    """
+    args = ["ruff", "check", "--fix"]
+    if file_name:
+        if pathlib.Path(file_name).is_absolute():
+            target_file = pathlib.Path(file_name)
+        else:
+            target_file = PROJECT_DIR / file_name
+        if PROJECT_DIR not in target_file.parents:
+            return "Error: Access to this file is not allowed!"
+        if not target_file.exists():
+            return "Error: The target file does not exist!"
+        args.append(target_file)
+    try:
+        logger.info(f"Running ruff fix: {args}")
         result = subprocess.run(args, capture_output=True, text=True, cwd=PROJECT_DIR)
         logger.debug(f"Result: {result}")
         logger.debug(f"Return code: {result.returncode}")
@@ -47,7 +81,7 @@ analysis_agent = Agent(
     tools=[run_analysis_tool],
     show_tool_calls=False,
     description="You are responsible for identifying issues in a software project with a linting tool",
-    instructions=f"""Run the analysis tools and output a list of issues found. 
+    instructions="""Run the analysis tools and output a list of issues found. 
     The list should contain the exact file path, line number and position and a full description of the issues found.
     
     Always use the full absolute path of the files, never only the name.
@@ -58,8 +92,9 @@ analysis_agent = Agent(
 )
 fixing_agent = Agent(
     name="Fixer",
+    # model=OpenAIChat(id="gpt-4o-mini"),
     role="Takes one issue and fixes it in a software project.",
-    tools=[FileTools(base_dir=PROJECT_DIR)],
+    tools=[FileTools(base_dir=PROJECT_DIR), autofix],
     show_tool_calls=True,
     description="You are responsible for fixing a given problem in a software project",
     instructions="""You are a very experienced, clean coder. 
@@ -75,22 +110,26 @@ fixing_agent = Agent(
     """
 )
 main_agent = Agent(
-    name="Project Fixer",
+    name="Coordinator",
+    # model=OpenAIChat(id="o1-mini"),
+    model=OpenAIChat(id="gpt-4o"),
+    reasoning=True,
     team=[analysis_agent, fixing_agent],
     tools=[FileTools(base_dir=PROJECT_DIR)],
-    instructions=[f"""
+    instructions=["""
     Analyze and apply fixes for issues in the given Python project.
     
     Always use the full absolute path of the files, never only the name.
     
-    Always double-check if everything is resolved, otherwise re-iterate.
-    That means, after fixing the files, run the analyzing tools again and see if further fixes are necessary.
-    
+    Start your job with running the analyis tool.
+    Then try to fix the issues by running other tools.
+    Afterwards always double-check if everything is resolved, otherwise re-iterate.
+    That means, after fixing the files, run the analyzing tools again and see if further fixes are necessary.    
     """],
     show_tool_calls=True,
     markdown=True,
 )
 main_agent.print_response(
-    "Go and fix all issues. ",
+    "Run the analysis tool and fix everything it reports. ",
     stream=True,
 )
